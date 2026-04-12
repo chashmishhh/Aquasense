@@ -32,10 +32,10 @@ app.add_middleware(
 # ==============================
 def get_connection():
     return psycopg2.connect(
-        host="db.cguaghcgesxgmrghaghg.supabase.co",
-        port="5432",
+        host="aws-1-ap-south-1.pooler.supabase.com",
+        port="6543",
         database="postgres",
-        user="postgres",
+        user="postgres.cguaghcgesxgmrghaghg",
         password="SamiRaj@2416",
         sslmode="require"
     )
