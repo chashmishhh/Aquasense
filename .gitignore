@@ -1,0 +1,21 @@
+# Python
+backend/venv
+backend/__pycache__/
+backend/*.pyc
+backend/.env
+
+# Node
+frontend/node_modules/
+frontend/build/
+frontend/.env
+frontend/.env.local
+frontend/.env.production.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large ML binary files (not needed for deployment)
+ml_model/saved_models/
+ml_model/animations/
+ml_model/images/
