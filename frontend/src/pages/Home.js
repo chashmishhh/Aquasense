@@ -61,16 +61,29 @@ const Home = () => {
     waterPercent < 40 ? 'Refill soon' :
       waterPercent > 85 ? 'Nearly full' : `${tankH} cm tank`;
 
-  /* Time filter */
+  /* Time filter — parse created_at as UTC (no trailing Z from DB) */
+  const toUtcMs = (raw) => {
+    const s = String(raw).replace(' ', 'T');
+    return new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
+  };
   const filterByTime = (data) => {
     if (timeRange === 'all') return data;
     const ms = { '1h': 3600000, '6h': 21600000, '24h': 86400000, '7d': 604800000 }[timeRange] || Infinity;
-    return data.filter(d => Date.now() - new Date(d.created_at) <= ms);
+    return data.filter(d => Date.now() - toUtcMs(d.created_at) <= ms);
   };
 
-  /* Chart data */
+  /* Chart data — convert DB timestamp (stored as UTC) to IST display string */
+  const toISTLabel = (raw) => {
+    // raw may be "2026-05-27 00:06:00" (no Z) — treat as UTC
+    const s = String(raw).replace(' ', 'T');
+    const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
+    const istDate = new Date(utcMs + 5.5 * 3600000);
+    const h = istDate.getUTCHours(), m = istDate.getUTCMinutes();
+    const a = h >= 12 ? 'PM' : 'AM';
+    return `${h % 12 || 12}:${m.toString().padStart(2, '0')}${a}`;
+  };
   const chartData = filterByTime([...sensorData].reverse()).map(item => ({
-    time: new Date(item.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+    time: toISTLabel(item.created_at),
     temperature: Math.round(item.temperature * 10) / 10,
     waterLevel: Math.max(0, parseFloat((item.water_level || 0).toFixed(1))),
   }));
@@ -108,6 +121,15 @@ const Home = () => {
   }, [selectedNode]);
 
   /* Fetch sensor data */
+  // A node is considered Online only if its latest reading arrived within this threshold
+  const ONLINE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
+  const isRecentReading = (raw) => {
+    const s = String(raw).replace(' ', 'T');
+    const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
+    return (Date.now() - utcMs) <= ONLINE_THRESHOLD_MS;
+  };
+
   const fetchSensorData = useCallback(async () => {
     if (!selectedNode) return;
     try {
@@ -118,11 +140,17 @@ const Home = () => {
       const clean = (res.data || []).filter(d => d.water_level >= 0 && d.water_level <= 500);
       if (clean.length > 0) {
         setSensorData(clean); setHasData(true); setStatusMsg('');
-        setLastUpdated(fsh(ist())); setIsOnline(true);
+        setLastUpdated(fsh(ist()));
+        // Check if the LATEST reading is recent enough to call the node Online
+        const latestRaw = clean[0]?.created_at;
+        const online = latestRaw ? isRecentReading(latestRaw) : false;
+        setIsOnline(online);
         const dot = document.getElementById('ldot');
         const ltx = document.getElementById('ltx');
-        if (dot) dot.className = 'ld on';
-        if (ltx) ltx.textContent = 'Live';
+        if (dot) dot.className = online ? 'ld on' : 'ld off';
+        if (ltx) ltx.textContent = online ? 'Live' : 'Stale';
+        if (!online) setStatusMsg(`Last seen: ${fsh(new Date(String(latestRaw).replace(' ','T') + 'Z'))}. Node may be offline.`);
+        else setStatusMsg('');
       } else {
         setHasData(false); setIsOnline(false);
         setStatusMsg(`No sensor data for ${selectedNode}`);
