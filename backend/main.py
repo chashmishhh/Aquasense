@@ -86,7 +86,7 @@ def on_message(client, userdata, msg):
         node_id     = payload.get("node_id", "UNKNOWN")
         temperature = float(payload.get("temperature", 0))
         water_level = float(payload.get("water_level", 0))
-        created_at  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        created_at  = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")  # always UTC
 
         conn = get_connection()
         cur  = conn.cursor()
@@ -211,7 +211,7 @@ def refresh_sensor_data(node_id: str = "NODE_001"):
 @app.post("/ingest")
 def ingest_sensor_data(data: SensorData):
     try:
-        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")  # always UTC
         conn = get_connection()
         cur  = conn.cursor()
         cur.execute("""
@@ -290,6 +290,30 @@ def delete_tank_node(node_id: str):
     conn.close()
     return {"message": f"Node '{node_id}' and all its sensor data deleted."}
 
+# ==============================
+# GET /node-status — returns online/offline based on last reading age
+# ==============================
+@app.get("/node-status")
+def get_node_status(node_id: str = "NODE_001"):
+    try:
+        conn = get_connection()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT created_at FROM sensor_data
+            WHERE node_id = %s
+            ORDER BY created_at DESC LIMIT 1
+        """, (node_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row is None:
+            return {"online": False, "last_seen": None, "reason": "no_data"}
+        last_seen = row[0]
+        delta_seconds = (datetime.utcnow() - last_seen).total_seconds()
+        online = delta_seconds <= 600  # 10 minutes
+        return {"online": online, "last_seen": str(last_seen), "seconds_ago": int(delta_seconds)}
+    except Exception as e:
+        return {"online": False, "last_seen": None, "reason": str(e)}
 
 # ==============================
 # GET /sensor-data — read from Supabase
