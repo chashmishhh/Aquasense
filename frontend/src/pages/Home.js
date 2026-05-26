@@ -121,36 +121,32 @@ const Home = () => {
   }, [selectedNode]);
 
   /* Fetch sensor data */
-  // A node is considered Online only if its latest reading arrived within this threshold
-  const ONLINE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
-
-  const isRecentReading = (raw) => {
-    const s = String(raw).replace(' ', 'T');
-    const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
-    return (Date.now() - utcMs) <= ONLINE_THRESHOLD_MS;
-  };
-
   const fetchSensorData = useCallback(async () => {
     if (!selectedNode) return;
     try {
-      // Trigger backend to pull latest reading from ThingSpeak into DB
       await axios.get(`${API}/refresh?node_id=${selectedNode}`);
-      // Now read the updated data from DB
       const res = await axios.get(`${API}/sensor-data?node_id=${selectedNode}`);
       const clean = (res.data || []).filter(d => d.water_level >= 0 && d.water_level <= 500);
       if (clean.length > 0) {
-        setSensorData(clean); setHasData(true); setStatusMsg('');
+        setSensorData(clean); setHasData(true);
         setLastUpdated(fsh(ist()));
-        // Check if the LATEST reading is recent enough to call the node Online
         const latestRaw = clean[0]?.created_at;
-        const online = latestRaw ? isRecentReading(latestRaw) : false;
+        let online = false;
+        if (latestRaw) {
+          const s = String(latestRaw).replace(' ', 'T').replace(/\..*$/, '');
+          const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
+          online = (Date.now() - utcMs) / 60000 <= 10;
+        }
         setIsOnline(online);
         const dot = document.getElementById('ldot');
         const ltx = document.getElementById('ltx');
         if (dot) dot.className = online ? 'ld on' : 'ld off';
         if (ltx) ltx.textContent = online ? 'Live' : 'Stale';
-        if (!online) setStatusMsg(`Last seen: ${fsh(new Date(String(latestRaw).replace(' ','T') + 'Z'))}. Node may be offline.`);
-        else setStatusMsg('');
+        if (!online) {
+          const s = String(latestRaw).replace(' ', 'T').replace(/\..*$/, '');
+          const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
+          setStatusMsg(`Node offline — last seen ${Math.round((Date.now() - utcMs) / 60000)} min ago`);
+        } else { setStatusMsg(''); }
       } else {
         setHasData(false); setIsOnline(false);
         setStatusMsg(`No sensor data for ${selectedNode}`);
@@ -164,6 +160,7 @@ const Home = () => {
       if (dot) dot.className = 'ld off';
     } finally { setLoading(false); }
   }, [selectedNode]);
+
 
   useEffect(() => { fetchNodes(); }, []);
   useEffect(() => { if (selectedNode) { setLoading(true); fetchSensorData(); } }, [selectedNode]);
