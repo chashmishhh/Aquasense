@@ -6,12 +6,15 @@ import json
 import ssl
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 import paho.mqtt.client as mqtt_lib
+
+def get_ist_now():
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
 # ==============================
 # MQTT CONFIG — HiveMQ Public Broker (Plain TCP)
@@ -121,7 +124,7 @@ def on_message(client, userdata, msg):
         node_id     = payload.get("node_id", "UNKNOWN")
         temperature = float(payload.get("temperature", 0))
         water_level = float(payload.get("water_level", 0))
-        created_at  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        created_at  = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         conn = get_conn()
         cur  = conn.cursor()
@@ -257,7 +260,7 @@ def refresh_sensor_data(node_id: str = "NODE_001"):
 def ingest_sensor_data(data: SensorData):
     conn = None
     try:
-        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        created_at = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
         conn = get_conn()
         cur  = conn.cursor()
         cur.execute("""
@@ -384,7 +387,7 @@ def get_node_status(node_id: str = "NODE_001"):
         if row is None:
             return {"online": False, "last_seen": None, "reason": "no_data"}
         last_seen = row[0]
-        delta_seconds = (datetime.now() - last_seen).total_seconds()
+        delta_seconds = (get_ist_now() - last_seen).total_seconds()
         online = delta_seconds <= 600
         return {"online": online, "last_seen": str(last_seen), "seconds_ago": int(delta_seconds)}
     except Exception as e:
