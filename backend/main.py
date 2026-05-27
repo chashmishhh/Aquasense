@@ -6,7 +6,7 @@ import ssl
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -137,7 +137,12 @@ def start_mqtt_subscriber():
 # ==============================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    create_tables()
+    try:
+        create_tables()
+        print("[DB] Tables ready")
+    except Exception as e:
+        print(f"[DB] WARNING: Could not create tables on startup: {e}")
+        print("[DB] Will retry on first request. Continuing startup...")
     t = threading.Thread(target=start_mqtt_subscriber, daemon=True)
     t.start()
     print("[MQTT] Subscriber thread started")
@@ -255,17 +260,38 @@ def create_tank_parameters(data: TankParameters):
 
 
 # ==============================
-# GET /tank-parameters — list all nodes
+# GET /tank-parameters — list all nodes (with pagination)
 # ==============================
 @app.get("/tank-parameters")
-def get_tank_parameters():
+def get_tank_parameters(
+    page: int = Query(1, ge=1),
+    size: int = Query(100, ge=1, le=500),
+    sort_by: str = Query("id"),
+    sort_order: str = Query("asc")
+):
     conn = get_connection()
     cur  = conn.cursor()
-    cur.execute("SELECT * FROM tank_sensorparameters")
+
+    # Whitelist sortable columns to prevent SQL injection
+    allowed_cols = {"id", "node_id", "tank_height_cm", "lat", "long"}
+    col = sort_by if sort_by in allowed_cols else "id"
+    order = "DESC" if sort_order.lower() == "desc" else "ASC"
+
+    # Total count
+    cur.execute("SELECT COUNT(*) FROM tank_sensorparameters")
+    total = cur.fetchone()[0]
+
+    # Paginated rows
+    offset = (page - 1) * size
+    cur.execute(
+        f"SELECT * FROM tank_sensorparameters ORDER BY {col} {order} LIMIT %s OFFSET %s",
+        (size, offset)
+    )
     rows = cur.fetchall()
     cur.close()
     conn.close()
-    return [{
+
+    items = [{
         "id":             row[0],
         "node_id":        row[1],
         "tank_height_cm": row[2],
@@ -274,6 +300,14 @@ def get_tank_parameters():
         "lat":            row[5],
         "long":           row[6]
     } for row in rows]
+
+    # Return paginated envelope so frontend can use .total, .page, .size
+    return {
+        "total": total,
+        "page":  page,
+        "size":  size,
+        "items": items
+    }
 
 
 # ==============================
@@ -290,11 +324,13 @@ def delete_tank_node(node_id: str):
     conn.close()
     return {"message": f"Node '{node_id}' and all its sensor data deleted."}
 
+
 # ==============================
 # GET /node-status — returns online/offline based on last reading age
 # ==============================
 @app.get("/node-status")
 def get_node_status(node_id: str = "NODE_001"):
+    """Returns online=True if the node sent data in the last 10 minutes (server-side UTC check)."""
     try:
         conn = get_connection()
         cur  = conn.cursor()
@@ -308,12 +344,18 @@ def get_node_status(node_id: str = "NODE_001"):
         conn.close()
         if row is None:
             return {"online": False, "last_seen": None, "reason": "no_data"}
-        last_seen = row[0]
+        last_seen = row[0]  # datetime object from psycopg2
+        # psycopg2 returns naive datetime — treat as UTC
         delta_seconds = (datetime.utcnow() - last_seen).total_seconds()
         online = delta_seconds <= 600  # 10 minutes
-        return {"online": online, "last_seen": str(last_seen), "seconds_ago": int(delta_seconds)}
+        return {
+            "online": online,
+            "last_seen": str(last_seen),
+            "seconds_ago": int(delta_seconds)
+        }
     except Exception as e:
         return {"online": False, "last_seen": None, "reason": str(e)}
+
 
 # ==============================
 # GET /sensor-data — read from Supabase

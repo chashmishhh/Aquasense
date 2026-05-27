@@ -111,7 +111,7 @@ const Home = () => {
   const fetchNodes = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/tank-parameters`);
-      const data = res.data || [];
+      const data = (res.data?.items) || res.data || [];
       setNodes(data);
       if (data.length > 0 && !selectedNode) {
         setSelectedNode(data[0].node_id);
@@ -124,18 +124,24 @@ const Home = () => {
   const fetchSensorData = useCallback(async () => {
     if (!selectedNode) return;
     try {
+      // Trigger backend to pull latest reading from ThingSpeak into DB
       await axios.get(`${API}/refresh?node_id=${selectedNode}`);
+      // Now read the updated data from DB
       const res = await axios.get(`${API}/sensor-data?node_id=${selectedNode}`);
       const clean = (res.data || []).filter(d => d.water_level >= 0 && d.water_level <= 500);
       if (clean.length > 0) {
         setSensorData(clean); setHasData(true);
         setLastUpdated(fsh(ist()));
+        // Offline check: treat created_at as UTC, compare with browser UTC now
         const latestRaw = clean[0]?.created_at;
         let online = false;
         if (latestRaw) {
+          // FastAPI returns datetime as ISO string e.g. "2026-05-26T19:43:35"
+          // Append Z to force UTC parsing (Render server is UTC)
           const s = String(latestRaw).replace(' ', 'T').replace(/\..*$/, '');
           const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
-          online = (Date.now() - utcMs) / 60000 <= 10;
+          const elapsedMin = (Date.now() - utcMs) / 60000;
+          online = elapsedMin <= 10; // online if reading is < 10 minutes old
         }
         setIsOnline(online);
         const dot = document.getElementById('ldot');
@@ -145,8 +151,11 @@ const Home = () => {
         if (!online) {
           const s = String(latestRaw).replace(' ', 'T').replace(/\..*$/, '');
           const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
-          setStatusMsg(`Node offline — last seen ${Math.round((Date.now() - utcMs) / 60000)} min ago`);
-        } else { setStatusMsg(''); }
+          const minsAgo = Math.round((Date.now() - utcMs) / 60000);
+          setStatusMsg(`Node offline — last seen ${minsAgo} min ago`);
+        } else {
+          setStatusMsg('');
+        }
       } else {
         setHasData(false); setIsOnline(false);
         setStatusMsg(`No sensor data for ${selectedNode}`);
@@ -160,7 +169,6 @@ const Home = () => {
       if (dot) dot.className = 'ld off';
     } finally { setLoading(false); }
   }, [selectedNode]);
-
 
   useEffect(() => { fetchNodes(); }, []);
   useEffect(() => { if (selectedNode) { setLoading(true); fetchSensorData(); } }, [selectedNode]);

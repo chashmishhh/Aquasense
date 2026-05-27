@@ -35,11 +35,12 @@ const NodeCreation = () => {
         }
       );
       
-      setExistingNodes(response.data || []);
+      const data = response.data || {};
+      setExistingNodes(data.items || []);
       setPagination({
-        total: response.data.total || 0,
-        page: response.data.page || 1,
-        size: response.data.size || 10
+        total: data.total || 0,
+        page:  data.page  || 1,
+        size:  data.size  || 10
       });
     } catch (error) {
       console.error('Error fetching existing nodes:', error);

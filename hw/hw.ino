@@ -1,146 +1,84 @@
 /*
 ============================================================================
   AquaSense — MQTT via SIM800L
-  ESP32-S3 + SIM800L → GPRS → MQTT broker (broker.hivemq.com:1883)
+  ESP32-S3 + SIM800L → GPRS → MQTT broker (broker.hivemq.com:1883, plain TCP)
+  Topic: aquasense/NODE_01
+  Payload: {"node_id":"NODE_01","temperature":25.1,"water_level":90.2}
 
-  Features:
-  - DS18B20 temperature sensing
-  - Ultrasonic water level sensing
-  - Blind-zone handling
-  - Temperature compensated distance
-  - MQTT publish over GPRS
+  Libraries needed (install via Arduino Library Manager):
+    - TinyGSM        (by Volodymyr Shymanskyy)
+    - PubSubClient   (by Nick O'Leary)
+    - DallasTemperature + OneWire
 ============================================================================
 */
 
 #define TINY_GSM_MODEM_SIM800
-
 #include <TinyGsmClient.h>
 #include <PubSubClient.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <HardwareSerial.h>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SETTINGS
-// ─────────────────────────────────────────────────────────────────────────────
-const char* APN         = "internet";
+// ─── SETTINGS ────────────────────────────────────────────────────────────────
+const char* APN         = "internet";          // your SIM card APN
 const char* NODE_ID     = "NODE_01";
 
-const char* MQTT_BROKER = "broker.hivemq.com";
-const int   MQTT_PORT   = 1883;
-const char* MQTT_TOPIC  = "aquasense/NODE_01";
+const char* MQTT_BROKER   = "broker.hivemq.com";  // HiveMQ public broker
+const int   MQTT_PORT     = 1883;                  // Plain TCP (no TLS)
+const char* MQTT_TOPIC    = "aquasense/NODE_01";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PINS
-// ─────────────────────────────────────────────────────────────────────────────
-#define DS18B20_PIN   16
+// ─── PINS ────────────────────────────────────────────────────────────────────
+#define DS18B20_PIN  16
+#define ECHO_PIN     18   // AJSR04M TX → ESP32 RX
+#define TRIG_PIN     17   // AJSR04M RX ← ESP32 TX
+#define SIM_ESP_RX    9   // ESP32 RX ← SIM TX
+#define SIM_ESP_TX   10   // ESP32 TX → SIM RX
+#define SIM_RST      11
 
-#define TRIG_PIN      17
-#define ECHO_PIN      18
+// ─── TIMING & TANK ───────────────────────────────────────────────────────────
+#define SAMPLE_MS       15000UL
+#define TANK_HEIGHT_CM  152.4f
 
-#define SIM_ESP_RX     9
-#define SIM_ESP_TX    10
-#define SIM_RST       11
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TANK & TIMING
-// ─────────────────────────────────────────────────────────────────────────────
-#define SAMPLE_MS         15000UL
-
-// Actual tank height
-#define TANK_HEIGHT_CM    152.4f
-
-// Height of sensor from tank bottom
-#define SENSOR_HEIGHT_CM  140.4f
-
-// Ultrasonic blind zone
-#define BLIND_ZONE_CM     14.0f  //15 - 1 bcz 1cm calibrate during testing
-
-// ─────────────────────────────────────────────────────────────────────────────
-// OBJECTS
-// ─────────────────────────────────────────────────────────────────────────────
-HardwareSerial simSerial(1);
-HardwareSerial UltrasonicSerial(2);
-
-OneWire oneWire(DS18B20_PIN);
+// ─── OBJECTS ─────────────────────────────────────────────────────────────────
+HardwareSerial    simSerial(1);
+HardwareSerial    UltrasonicSerial(2);
+OneWire           oneWire(DS18B20_PIN);
 DallasTemperature tempSensor(&oneWire);
+TinyGsm             modem(simSerial);
+TinyGsmClient       gsmClient(modem);   // Plain TCP client (SIM800L has no TLS)
+PubSubClient        mqtt(gsmClient);
 
-TinyGsm modem(simSerial);
-TinyGsmClient gsmClient(modem);
-
-PubSubClient mqtt(gsmClient);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// STATE VARIABLES
-// ─────────────────────────────────────────────────────────────────────────────
-float curTemp      = 25.0f;
-
-// Start assuming empty tank
-float lastDist     = SENSOR_HEIGHT_CM;
-
-float waterLevel   = 0.0f;
-
+// ─── STATE ───────────────────────────────────────────────────────────────────
+float curTemp    = 25.0f;
+float lastDist   = 0.0f;
+float waterLevel = 0.0f;
 unsigned long tLastSample = 0;
 
 
 // ═════════════════════════════════════════════════════════════════════════════
-// TEMPERATURE SENSOR
+// SENSORS
 // ═════════════════════════════════════════════════════════════════════════════
 float readTemperature() {
-
   tempSensor.requestTemperatures();
-
   float t = tempSensor.getTempCByIndex(0);
-
-  // Accept only valid temperatures
-  if (t > -55.0f && t < 125.0f) {
-    return t;
-  }
-
-  return curTemp;
+  return (t > -55.0f && t < 125.0f) ? t : curTemp;
 }
 
-
-// ═════════════════════════════════════════════════════════════════════════════
-// ULTRASONIC SENSOR
-// ═════════════════════════════════════════════════════════════════════════════
 float readSonar() {
-
-  while (UltrasonicSerial.available()) {
-    UltrasonicSerial.read();
-  }
-
+  while (UltrasonicSerial.available()) UltrasonicSerial.read();
   UltrasonicSerial.write(0x55);
-
   unsigned long start = millis();
-
   while (UltrasonicSerial.available() < 4) {
-
-    if (millis() - start > 200) {
-      return -1;
-    }
+    if (millis() - start > 200) return -1;
   }
-
   uint8_t data[4];
-
   UltrasonicSerial.readBytes(data, 4);
-
   if (data[0] == 0xFF) {
-
-    int dist_mm =
-      (data[1] << 8) | data[2];
-
-    int checksum =
-      (data[0] + data[1] + data[2]) & 0xFF;
-
-    if (checksum == data[3] &&
-        dist_mm > 0 &&
-        dist_mm < 8000) {
-
+    int dist_mm  = (data[1] << 8) | data[2];
+    int checksum = (data[0] + data[1] + data[2]) & 0xFF;
+    if (checksum == data[3] && dist_mm > 0 && dist_mm < 8000)
       return dist_mm / 10.0f;
-    }
   }
-
   return -1;
 }
 
@@ -149,25 +87,16 @@ float readSonar() {
 // MQTT CONNECT
 // ═════════════════════════════════════════════════════════════════════════════
 bool mqttConnect() {
-
-  Serial.print("[MQTT] Connecting...");
-
-  String clientId =
-    "AquaSense_" +
-    String(NODE_ID) +
-    "_" +
-    String(millis());
-
+  Serial.print("[MQTT] Connecting to HiveMQ (TCP)...");
+  // Unique client ID prevents duplicate session conflicts on broker
+  String clientId = "AquaSense_" + String(NODE_ID) + "_" + String(millis());
+  // Public broker — no username/password needed
   if (mqtt.connect(clientId.c_str())) {
-
     Serial.println(" OK");
-
     return true;
   }
-
   Serial.print(" FAIL rc=");
   Serial.println(mqtt.state());
-
   return false;
 }
 
@@ -176,163 +105,88 @@ bool mqttConnect() {
 // SETUP
 // ═════════════════════════════════════════════════════════════════════════════
 void setup() {
-
   Serial.begin(115200);
-
-  delay(3000);
-
-  Serial.println("BOOT OK");
+  delay(100);
 
   pinMode(SIM_RST, OUTPUT);
   digitalWrite(SIM_RST, HIGH);
 
-  Serial.println("SIM RESET PIN OK");
-
   tempSensor.begin();
-
-  Serial.println("TEMP SENSOR OK");
-
-  simSerial.begin(
-    9600,
-    SERIAL_8N1,
-    SIM_ESP_RX,
-    SIM_ESP_TX
-  );
-
-  Serial.println("SIM SERIAL OK");
-
-  UltrasonicSerial.begin(
-    9600,
-    SERIAL_8N1,
-    ECHO_PIN,
-    TRIG_PIN
-  );
-
-  Serial.println("ULTRASONIC SERIAL OK");
+  simSerial.begin(9600, SERIAL_8N1, SIM_ESP_RX, SIM_ESP_TX);
+  UltrasonicSerial.begin(9600, SERIAL_8N1, ECHO_PIN, TRIG_PIN);
 
   delay(3000);
-
   Serial.println("[GSM] Restarting modem...");
-
   modem.restart();
 
-  Serial.println("MODEM RESTART DONE");
-
   Serial.print("[GSM] Waiting for network...");
-
   if (!modem.waitForNetwork(60000L)) {
-
-    Serial.println(" FAIL");
-
-    return;
+    Serial.println(" FAIL — check SIM card");
+    while (true);
   }
-
   Serial.println(" OK");
 
-  Serial.print("[GSM] Connecting GPRS...");
-
+  Serial.print("[GSM] Connecting GPRS (APN: ");
+  Serial.print(APN);
+  Serial.print(")...");
   if (!modem.gprsConnect(APN)) {
-
-    Serial.println(" FAIL");
-
-    return;
+    Serial.println(" FAIL — check APN");
+    while (true);
   }
-
   Serial.println(" OK");
-
   Serial.print("[GSM] IP: ");
   Serial.println(modem.localIP());
 
   mqtt.setServer(MQTT_BROKER, MQTT_PORT);
-
   mqttConnect();
 }
 
+
+// ═════════════════════════════════════════════════════════════════════════════
+// LOOP
+// ═════════════════════════════════════════════════════════════════════════════
 void loop() {
 
-  // ── MQTT KEEPALIVE ────────────────────────────────────────────────────────
+  // ── Keep MQTT alive ──────────────────────────────────────────────────────
   if (!mqtt.connected()) {
-
-    Serial.println("[MQTT] Reconnecting...");
-
+    Serial.println("[MQTT] Disconnected, reconnecting...");
     if (!modem.isGprsConnected()) {
-
-      Serial.println("[GSM] Reconnecting GPRS...");
-
+      Serial.println("[GSM] GPRS lost, reconnecting...");
       modem.gprsConnect(APN);
     }
-
     mqttConnect();
   }
-
   mqtt.loop();
 
-
-  // ── PERIODIC SAMPLING ─────────────────────────────────────────────────────
+  // ── Sample & publish every SAMPLE_MS ─────────────────────────────────────
   unsigned long now = millis();
-
   if (now - tLastSample >= SAMPLE_MS) {
-
     tLastSample = now;
 
-    // Temperature
     curTemp = readTemperature();
-
     delay(50);
 
-    // Distance
     float d = readSonar();
+    if (d > 0) lastDist = d;
+    float curDist = (lastDist > 0) ? lastDist : 0;
 
-    // Accept only valid readings
-    if (d >= BLIND_ZONE_CM &&
-        d <= SENSOR_HEIGHT_CM) {
+    // Temperature-compensated water level
+    float vWtc            = 343.0f * sqrt((curTemp + 273.0f) / 273.0f);
+    float distCompensated = curDist * (vWtc / 343.0f);
+    waterLevel = TANK_HEIGHT_CM - distCompensated;
+    if (waterLevel < 0)              waterLevel = 0;
+    if (waterLevel > TANK_HEIGHT_CM) waterLevel = TANK_HEIGHT_CM;
 
-      lastDist = d;
-    }
-
-    float curDist = lastDist;
-
-    // Temperature compensation
-    float vWtc =
-      343.0f *
-      sqrt((curTemp + 273.0f) / 273.0f);
-
-    float distCompensated =
-      curDist * (vWtc / 343.0f);
-
-    // Water level
-    waterLevel =
-      SENSOR_HEIGHT_CM - distCompensated;
-
-    if (waterLevel < 0)
-      waterLevel = 0;
-
-    if (waterLevel > SENSOR_HEIGHT_CM)
-      waterLevel = SENSOR_HEIGHT_CM;
-
-    // JSON payload
+    // Build JSON payload
     char payload[128];
-
-    snprintf(
-      payload,
-      sizeof(payload),
+    snprintf(payload, sizeof(payload),
       "{\"node_id\":\"%s\",\"temperature\":%.1f,\"water_level\":%.1f}",
-      NODE_ID,
-      curTemp,
-      waterLevel
-    );
+      NODE_ID, curTemp, waterLevel);
 
-    // Publish
-    bool ok =
-      mqtt.publish(
-        MQTT_TOPIC,
-        payload,
-        true
-      );
-
+    // Publish — retained=true so broker keeps last value for late subscribers
+    bool ok = mqtt.publish(MQTT_TOPIC, payload, true);
     Serial.print("[MQTT] Published: ");
     Serial.print(payload);
-
     Serial.println(ok ? " [OK]" : " [FAIL]");
   }
 }
