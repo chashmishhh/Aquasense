@@ -78,8 +78,8 @@ def create_tables():
     CREATE TABLE IF NOT EXISTS sensor_data (
         id SERIAL PRIMARY KEY,
         node_id VARCHAR(50),
-        field1 FLOAT,
-        field2 FLOAT,
+        temperature FLOAT,
+        water_level FLOAT,
         created_at TIMESTAMP
     )
     """)
@@ -126,7 +126,7 @@ def on_message(client, userdata, msg):
         conn = get_conn()
         cur  = conn.cursor()
         cur.execute("""
-            INSERT INTO sensor_data (node_id, field1, field2, created_at)
+            INSERT INTO sensor_data (node_id, temperature, water_level, created_at)
             VALUES (%s, %s, %s, %s)
         """, (node_id, temperature, water_level, created_at))
         conn.commit()
@@ -224,7 +224,7 @@ def refresh_sensor_data(node_id: str = "NODE_001"):
         conn = get_conn()
         cur  = conn.cursor()
         cur.execute("""
-            SELECT field1, field2, created_at
+            SELECT temperature, water_level, created_at
             FROM sensor_data
             WHERE node_id = %s
             ORDER BY created_at DESC
@@ -261,7 +261,7 @@ def ingest_sensor_data(data: SensorData):
         conn = get_conn()
         cur  = conn.cursor()
         cur.execute("""
-            INSERT INTO sensor_data (node_id, field1, field2, created_at)
+            INSERT INTO sensor_data (node_id, temperature, water_level, created_at)
             VALUES (%s, %s, %s, %s)
         """, (data.node_id, data.temperature, data.water_level, created_at))
         conn.commit()
@@ -406,13 +406,13 @@ def get_sensor_data(node_id: str = None):
         cur  = conn.cursor()
         if node_id:
             cur.execute("""
-                SELECT id, node_id, field1, field2, created_at
+                SELECT id, node_id, temperature, water_level, created_at
                 FROM sensor_data WHERE node_id = %s
                 ORDER BY created_at DESC LIMIT 100
             """, (node_id,))
         else:
             cur.execute("""
-                SELECT id, node_id, field1, field2, created_at
+                SELECT id, node_id, temperature, water_level, created_at
                 FROM sensor_data ORDER BY created_at DESC LIMIT 100
             """)
         rows = cur.fetchall()
