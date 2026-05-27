@@ -21,7 +21,7 @@ def get_ist_now():
 # ==============================
 MQTT_BROKER   = "broker.hivemq.com"
 MQTT_PORT     = 1883          # Plain TCP (no TLS)
-MQTT_TOPIC    = "aquasense/#"  # listens to all nodes
+MQTT_TOPIC    = "aquasense_v2/#"  # listens to all nodes
 
 
 # ==============================
