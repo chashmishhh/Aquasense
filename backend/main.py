@@ -121,7 +121,7 @@ def on_message(client, userdata, msg):
         node_id     = payload.get("node_id", "UNKNOWN")
         temperature = float(payload.get("temperature", 0))
         water_level = float(payload.get("water_level", 0))
-        created_at  = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        created_at  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         conn = get_conn()
         cur  = conn.cursor()
@@ -257,7 +257,7 @@ def refresh_sensor_data(node_id: str = "NODE_001"):
 def ingest_sensor_data(data: SensorData):
     conn = None
     try:
-        created_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn = get_conn()
         cur  = conn.cursor()
         cur.execute("""
@@ -384,7 +384,7 @@ def get_node_status(node_id: str = "NODE_001"):
         if row is None:
             return {"online": False, "last_seen": None, "reason": "no_data"}
         last_seen = row[0]
-        delta_seconds = (datetime.utcnow() - last_seen).total_seconds()
+        delta_seconds = (datetime.now() - last_seen).total_seconds()
         online = delta_seconds <= 600
         return {"online": online, "last_seen": str(last_seen), "seconds_ago": int(delta_seconds)}
     except Exception as e:
