@@ -61,10 +61,10 @@ const Home = () => {
     waterPercent < 40 ? 'Refill soon' :
       waterPercent > 85 ? 'Nearly full' : `${tankH} cm tank`;
 
-  /* Time filter — parse created_at as UTC (no trailing Z from DB) */
+  /* Time filter — DB returns IST */
   const toUtcMs = (raw) => {
-    const s = String(raw).replace(' ', 'T');
-    return new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
+    const dt = String(raw).split('+')[0].replace('Z', '').trim();
+    return new Date(dt.replace(' ', 'T')).getTime();
   };
   const filterByTime = (data) => {
     if (timeRange === 'all') return data;
@@ -72,13 +72,11 @@ const Home = () => {
     return data.filter(d => Date.now() - toUtcMs(d.created_at) <= ms);
   };
 
-  /* Chart data — convert DB timestamp (stored as UTC) to IST display string */
+  /* Chart data — DB already stores IST. Just extract and format it. */
   const toISTLabel = (raw) => {
-    // raw may be "2026-05-27 00:06:00" (no Z) — treat as UTC
-    const s = String(raw).replace(' ', 'T');
-    const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
-    const istDate = new Date(utcMs + 5.5 * 3600000);
-    const h = istDate.getUTCHours(), m = istDate.getUTCMinutes();
+    const dt = String(raw).split('+')[0].replace('Z', '').trim();
+    const d = new Date(dt.replace(' ', 'T'));
+    const h = d.getHours(), m = d.getMinutes();
     const a = h >= 12 ? 'PM' : 'AM';
     return `${h % 12 || 12}:${m.toString().padStart(2, '0')}${a}`;
   };
@@ -136,11 +134,9 @@ const Home = () => {
         const latestRaw = clean[0]?.created_at;
         let online = false;
         if (latestRaw) {
-          // FastAPI returns datetime as ISO string e.g. "2026-05-26T19:43:35"
-          // Append Z to force UTC parsing (Render server is UTC)
-          const s = String(latestRaw).replace(' ', 'T').replace(/\..*$/, '');
-          const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
-          const elapsedMin = (Date.now() - utcMs) / 60000;
+          const dt = String(latestRaw).split('+')[0].replace('Z', '').trim();
+          const localMs = new Date(dt.replace(' ', 'T')).getTime();
+          const elapsedMin = (Date.now() - localMs) / 60000;
           online = elapsedMin <= 10; // online if reading is < 10 minutes old
         }
         setIsOnline(online);
@@ -149,9 +145,9 @@ const Home = () => {
         if (dot) dot.className = online ? 'ld on' : 'ld off';
         if (ltx) ltx.textContent = online ? 'Live' : 'Stale';
         if (!online) {
-          const s = String(latestRaw).replace(' ', 'T').replace(/\..*$/, '');
-          const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
-          const minsAgo = Math.round((Date.now() - utcMs) / 60000);
+          const dt = String(latestRaw).split('+')[0].replace('Z', '').trim();
+          const localMs = new Date(dt.replace(' ', 'T')).getTime();
+          const minsAgo = Math.round((Date.now() - localMs) / 60000);
           setStatusMsg(`Node offline — last seen ${minsAgo} min ago`);
         } else {
           setStatusMsg('');
