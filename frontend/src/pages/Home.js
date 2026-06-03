@@ -72,15 +72,22 @@ const Home = () => {
     return data.filter(d => Date.now() - toUtcMs(d.created_at) <= ms);
   };
 
-  /* Chart data — convert DB timestamp (stored as UTC) to IST display string */
+  /* Chart data — DB already stores IST. Just extract and format it. */
   const toISTLabel = (raw) => {
+    if (!raw) return '--';
     const dt = String(raw).split('+')[0].replace('Z', '').trim();
     const d = new Date(dt.replace(' ', 'T'));
+    if (isNaN(d.getTime())) return String(raw); // Return raw if invalid
+    
     const h = d.getHours(), m = d.getMinutes();
     const a = h >= 12 ? 'PM' : 'AM';
-    const month = d.toLocaleString('default', { month: 'short' });
-    const day = d.getDate();
-    return `${month} ${day}, ${h % 12 || 12}:${m.toString().padStart(2, '0')}${a}`;
+    try {
+      const month = d.toLocaleString('default', { month: 'short' });
+      const day = d.getDate();
+      return `${month} ${day}, ${h % 12 || 12}:${m.toString().padStart(2, '0')}${a}`;
+    } catch (e) {
+      return '--';
+    }
   };
   const chartData = filterByTime([...sensorData].reverse()).map(item => ({
     time: toISTLabel(item.created_at),
