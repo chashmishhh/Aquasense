@@ -81,13 +81,7 @@ const Home = () => {
     
     const h = d.getHours(), m = d.getMinutes();
     const a = h >= 12 ? 'PM' : 'AM';
-    try {
-      const month = d.toLocaleString('default', { month: 'short' });
-      const day = d.getDate();
-      return `${month} ${day}, ${h % 12 || 12}:${m.toString().padStart(2, '0')}${a}`;
-    } catch (e) {
-      return '--';
-    }
+    return `${h % 12 || 12}:${m.toString().padStart(2, '0')}${a}`;
   };
   const chartData = filterByTime([...sensorData].reverse()).map(item => ({
     time: toISTLabel(item.created_at),
