@@ -30,7 +30,7 @@ const Home = () => {
   const [refreshMs, setRefreshMs] = useState(20000);
   const [showTemp, setShowTemp] = useState(true);
   const [showLevel, setShowLevel] = useState(true);
-  const [chartTab, setChartTab] = useState('live');
+  const [dpLimit, setDpLimit] = useState(100);
   const [isOnline, setIsOnline] = useState(false);
   const timerRef = useRef(null);
 
@@ -82,7 +82,13 @@ const Home = () => {
     
     const h = d.getHours(), m = d.getMinutes();
     const a = h >= 12 ? 'PM' : 'AM';
-    return `${h % 12 || 12}:${m.toString().padStart(2, '0')}${a}`;
+    try {
+      const month = d.toLocaleString('default', { month: 'short' });
+      const day = d.getDate();
+      return `${month} ${day}, ${h % 12 || 12}:${m.toString().padStart(2, '0')}${a}`;
+    } catch (e) {
+      return '--';
+    }
   };
   const chartData = filterByTime([...sensorData].reverse()).map(item => ({
     time: toISTLabel(item.created_at),
@@ -129,7 +135,7 @@ const Home = () => {
     if (!selectedNode) return;
     try {
       await axios.get(`${API}/refresh?node_id=${selectedNode}`);
-      const res = await axios.get(`${API}/sensor-data?node_id=${selectedNode}`);
+      const res = await axios.get(`${API}/sensor-data?node_id=${selectedNode}&limit=${dpLimit}`);
       const clean = (res.data || []).filter(d => d.water_level >= 0 && d.water_level <= 500);
       if (clean.length > 0) {
         setSensorData(clean); setHasData(true);
@@ -163,11 +169,11 @@ const Home = () => {
       const dot = document.getElementById('ldot');
       if (dot) dot.className = 'ld off';
     } finally { setLoading(false); }
-  }, [selectedNode]);
+  }, [selectedNode, API, dpLimit]);
 
 
   useEffect(() => { fetchNodes(); }, []);
-  useEffect(() => { if (selectedNode) { setLoading(true); fetchSensorData(); } }, [selectedNode]);
+  useEffect(() => { if (selectedNode) { setLoading(true); fetchSensorData(); } }, [selectedNode, dpLimit]);
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(fetchSensorData, refreshMs);
@@ -330,11 +336,14 @@ const Home = () => {
               Level
             </button>
             <span className="sep"></span>
-            {/* Chart time tabs */}
-            <button className={`t2 ${chartTab === 'live' ? 'on' : ''}`} onClick={() => setChartTab('live')}>Live</button>
-            <button className={`t2 ${chartTab === 'day' ? 'on' : ''}`} onClick={() => setChartTab('day')}>24h</button>
-            <button className={`t2 ${chartTab === 'week' ? 'on' : ''}`} onClick={() => setChartTab('week')}>7d</button>
-            <button className={`t2 ${chartTab === 'month' ? 'on' : ''}`} onClick={() => setChartTab('month')}>30d</button>
+            {/* Data point limit dropdown */}
+            <select className="ctrl-sel" style={{ marginLeft: '10px' }} value={dpLimit} onChange={e => setDpLimit(Number(e.target.value))}>
+              <option value={100}>100 datapoints</option>
+              <option value={500}>500 datapoints</option>
+              <option value={1000}>1000 datapoints</option>
+              <option value={5000}>5000 datapoints</option>
+              <option value={0}>All datapoints</option>
+            </select>
           </div>
         </div>
         <div className="pn-bd">

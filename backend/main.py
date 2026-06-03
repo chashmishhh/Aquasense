@@ -402,22 +402,25 @@ def get_node_status(node_id: str = "NODE_001"):
 # GET /sensor-data — read from Supabase
 # ==============================
 @app.get("/sensor-data")
-def get_sensor_data(node_id: str = None):
+def get_sensor_data(node_id: str = None, limit: int = 100):
     conn = None
     try:
         conn = get_conn()
         cur  = conn.cursor()
+        
+        limit_val = 100000 if limit == 0 else limit
+        
         if node_id:
             cur.execute("""
                 SELECT id, node_id, "Temperature", "Water level", created_at
                 FROM sensor_data WHERE node_id = %s
-                ORDER BY created_at DESC LIMIT 100
-            """, (node_id,))
+                ORDER BY created_at DESC LIMIT %s
+            """, (node_id, limit_val))
         else:
             cur.execute("""
                 SELECT id, node_id, "Temperature", "Water level", created_at
-                FROM sensor_data ORDER BY created_at DESC LIMIT 100
-            """)
+                FROM sensor_data ORDER BY created_at DESC LIMIT %s
+            """, (limit_val,))
         rows = cur.fetchall()
         cur.close()
         return [{
@@ -425,7 +428,7 @@ def get_sensor_data(node_id: str = None):
             "node_id":     row[1],
             "temperature": row[2],
             "water_level": row[3],
-            "created_at":  row[4]
+            "created_at":  str(row[4])
         } for row in rows]
     finally:
         put_conn(conn)
