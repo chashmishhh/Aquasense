@@ -26,7 +26,7 @@ MQTT_TOPIC    = "aquasense/#"  # listens to all nodes
 def get_connection():
     return psycopg2.connect(
         host="aws-1-ap-south-1.pooler.supabase.com",
-        port="5432",
+        port="6543",
         database="postgres",
         user="postgres.cguaghcgesxgmrghaghg",
         password="SamiRaj@2416",
