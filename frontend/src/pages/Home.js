@@ -61,10 +61,11 @@ const Home = () => {
     waterPercent < 40 ? 'Refill soon' :
       waterPercent > 85 ? 'Nearly full' : `${tankH} cm tank`;
 
-  /* Time filter — parse created_at as UTC (no trailing Z from DB) */
+  /* Time filter — DB returns IST */
   const toUtcMs = (raw) => {
-    const s = String(raw).replace(' ', 'T');
-    return new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
+    if (!raw) return 0;
+    const dt = String(raw).split('+')[0].replace('Z', '').trim();
+    return new Date(dt.replace(' ', 'T')).getTime() || 0;
   };
   const filterByTime = (data) => {
     if (timeRange === 'all') return data;
@@ -112,7 +113,9 @@ const Home = () => {
   const fetchNodes = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/tank-parameters`);
-      const data = res.data || [];
+      let data = (res.data && res.data.items) ? res.data.items : (res.data || []);
+      if (!Array.isArray(data)) data = [];
+      
       setNodes(data);
       if (data.length > 0 && !selectedNode) {
         setSelectedNode(data[0].node_id);
@@ -134,9 +137,9 @@ const Home = () => {
         const latestRaw = clean[0]?.created_at;
         let online = false;
         if (latestRaw) {
-          const s = String(latestRaw).replace(' ', 'T').replace(/\..*$/, '');
-          const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
-          online = (Date.now() - utcMs) / 60000 <= 10;
+          const dt = String(latestRaw).split('+')[0].replace('Z', '').trim();
+          const localMs = new Date(dt.replace(' ', 'T')).getTime();
+          online = (Date.now() - localMs) / 60000 <= 10;
         }
         setIsOnline(online);
         const dot = document.getElementById('ldot');
@@ -144,9 +147,9 @@ const Home = () => {
         if (dot) dot.className = online ? 'ld on' : 'ld off';
         if (ltx) ltx.textContent = online ? 'Live' : 'Stale';
         if (!online) {
-          const s = String(latestRaw).replace(' ', 'T').replace(/\..*$/, '');
-          const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
-          setStatusMsg(`Node offline — last seen ${Math.round((Date.now() - utcMs) / 60000)} min ago`);
+          const dt = String(latestRaw).split('+')[0].replace('Z', '').trim();
+          const localMs = new Date(dt.replace(' ', 'T')).getTime();
+          setStatusMsg(`Node offline — last seen ${Math.round((Date.now() - localMs) / 60000)} min ago`);
         } else { setStatusMsg(''); }
       } else {
         setHasData(false); setIsOnline(false);
