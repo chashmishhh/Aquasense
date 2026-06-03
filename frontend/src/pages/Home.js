@@ -61,10 +61,10 @@ const Home = () => {
     waterPercent < 40 ? 'Refill soon' :
       waterPercent > 85 ? 'Nearly full' : `${tankH} cm tank`;
 
-  /* Time filter — DB returns IST */
+  /* Time filter — parse created_at as UTC (no trailing Z from DB) */
   const toUtcMs = (raw) => {
-    const dt = String(raw).split('+')[0].replace('Z', '').trim();
-    return new Date(dt.replace(' ', 'T')).getTime();
+    const s = String(raw).replace(' ', 'T');
+    return new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
   };
   const filterByTime = (data) => {
     if (timeRange === 'all') return data;
@@ -72,13 +72,15 @@ const Home = () => {
     return data.filter(d => Date.now() - toUtcMs(d.created_at) <= ms);
   };
 
-  /* Chart data — DB already stores IST. Just extract and format it. */
+  /* Chart data — convert DB timestamp (stored as UTC) to IST display string */
   const toISTLabel = (raw) => {
     const dt = String(raw).split('+')[0].replace('Z', '').trim();
     const d = new Date(dt.replace(' ', 'T'));
     const h = d.getHours(), m = d.getMinutes();
     const a = h >= 12 ? 'PM' : 'AM';
-    return `${h % 12 || 12}:${m.toString().padStart(2, '0')}${a}`;
+    const month = d.toLocaleString('default', { month: 'short' });
+    const day = d.getDate();
+    return `${month} ${day}, ${h % 12 || 12}:${m.toString().padStart(2, '0')}${a}`;
   };
   const chartData = filterByTime([...sensorData].reverse()).map(item => ({
     time: toISTLabel(item.created_at),
@@ -109,7 +111,7 @@ const Home = () => {
   const fetchNodes = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/tank-parameters`);
-      const data = (res.data?.items) || res.data || [];
+      const data = res.data || [];
       setNodes(data);
       if (data.length > 0 && !selectedNode) {
         setSelectedNode(data[0].node_id);
@@ -122,22 +124,18 @@ const Home = () => {
   const fetchSensorData = useCallback(async () => {
     if (!selectedNode) return;
     try {
-      // Trigger backend to pull latest reading from ThingSpeak into DB
       await axios.get(`${API}/refresh?node_id=${selectedNode}`);
-      // Now read the updated data from DB
       const res = await axios.get(`${API}/sensor-data?node_id=${selectedNode}`);
       const clean = (res.data || []).filter(d => d.water_level >= 0 && d.water_level <= 500);
       if (clean.length > 0) {
         setSensorData(clean); setHasData(true);
         setLastUpdated(fsh(ist()));
-        // Offline check: treat created_at as UTC, compare with browser UTC now
         const latestRaw = clean[0]?.created_at;
         let online = false;
         if (latestRaw) {
-          const dt = String(latestRaw).split('+')[0].replace('Z', '').trim();
-          const localMs = new Date(dt.replace(' ', 'T')).getTime();
-          const elapsedMin = (Date.now() - localMs) / 60000;
-          online = elapsedMin <= 10; // online if reading is < 10 minutes old
+          const s = String(latestRaw).replace(' ', 'T').replace(/\..*$/, '');
+          const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
+          online = (Date.now() - utcMs) / 60000 <= 10;
         }
         setIsOnline(online);
         const dot = document.getElementById('ldot');
@@ -145,13 +143,10 @@ const Home = () => {
         if (dot) dot.className = online ? 'ld on' : 'ld off';
         if (ltx) ltx.textContent = online ? 'Live' : 'Stale';
         if (!online) {
-          const dt = String(latestRaw).split('+')[0].replace('Z', '').trim();
-          const localMs = new Date(dt.replace(' ', 'T')).getTime();
-          const minsAgo = Math.round((Date.now() - localMs) / 60000);
-          setStatusMsg(`Node offline — last seen ${minsAgo} min ago`);
-        } else {
-          setStatusMsg('');
-        }
+          const s = String(latestRaw).replace(' ', 'T').replace(/\..*$/, '');
+          const utcMs = new Date(s.endsWith('Z') ? s : s + 'Z').getTime();
+          setStatusMsg(`Node offline — last seen ${Math.round((Date.now() - utcMs) / 60000)} min ago`);
+        } else { setStatusMsg(''); }
       } else {
         setHasData(false); setIsOnline(false);
         setStatusMsg(`No sensor data for ${selectedNode}`);
@@ -165,6 +160,7 @@ const Home = () => {
       if (dot) dot.className = 'ld off';
     } finally { setLoading(false); }
   }, [selectedNode]);
+
 
   useEffect(() => { fetchNodes(); }, []);
   useEffect(() => { if (selectedNode) { setLoading(true); fetchSensorData(); } }, [selectedNode]);
